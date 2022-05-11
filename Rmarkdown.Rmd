@@ -1,0 +1,230 @@
+---
+title: "How smoking affects the environment and GDP of a country?"
+author: "Phuc Ngo"
+date: "08/24/2021"
+output: 
+  html_document:
+    css: ~/stat209/lab.css
+    highlight: pygments
+    theme: cerulean
+    #code_folding: hide
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggthemes)
+library(scales)
+library(sf)
+library(lubridate)
+library(leaflet)
+
+#install.packages("spData")
+library(spData)
+
+theme_set(theme_bw()) # change theme for ggplot2
+
+## Sets default "chunk options"
+knitr::opts_chunk$set(
+  tidy    = FALSE,       # display code as typed
+  size    = "small",     # slightly smaller font for code
+  message = FALSE)  # suppresses some unwanted output
+```
+
+## Introduction
+
+Lung cancer, heart attack, anxiety, and stroke. Those are the most well-known effects of cigarettes on smoker’s health that constantly torture them every day of their old age. Around 1.3 billion people worldwide and 35 million Americans are smokers, and approximately 20% of those are heavily addicted and half of them suffer from respiratory disease. Cigarettes, though being a new invention of mankind, are slowly but inevitably killing many dependent souls. 
+
+However, besides the indisputable health degradation, smoking indeed can result in many hidden consequences. For some growing tobacco-dependent nations, such as Zimbabwe, Brazil, or Zambia, this industry acts as a major source of income and occupation for a lot of farmers, which not only might lead to a higher GDP through exporting but also can have essential impacts on their environment.
+
+This project contains brief visualizations of how cigarettes actually affect these two fields and concludes several consequences around the subject of producing tobacco.
+
+---
+
+## Preparing The Data
+
+
+### <em>1. CO2 emissions per person dataset</em>
+The first dataset describes the CO2 emissions per person in tonnes in countries, from 1800 to 2016.
+We know the the original co2_emissions contains the data of co2 emissions per person each year in each country. However, it misses the variable that points to this element. 
+The original data is not tidy because the columns of the original table represent years. Every column needs to be a variable. So, we will use `pivot_longer()` for this dataset, as follows: 
+
+**Load the packages and data:**
+```{r, message=FALSE}
+co2_emissions <- read_csv("./csv/co2_emissions_tonnes_per_person.csv")
+
+co2_emissions_2012 <- co2_emissions %>%
+  pivot_longer(
+    cols = -country,
+    names_to = "year",
+    values_to = "emissions_per_person",
+  ) %>%
+  mutate(
+    year = year(parse_date(year, format = "%Y"))
+  ) %>%
+  filter(year == 2012)
+```
+*Data from the year of 2012
+### <em>2. Percentage of adult smoking to GDP per capita dataset</em>
+The second dataset explains how the shares of adults who are smoking, divided by their level of prosperity, from 1990 to 2017. Smoking prevalence (for 15 years old+) are also be considered.
+Again, in this dataset, each column needs to be rearrange to a single variable.
+
+**Load the packages and data:**
+```{r, message=FALSE}
+smoking <- read_csv("./csv/share-of-adults-who-are-smoking-by-level-of-prosperity.csv")
+
+smoking_2012 <- smoking %>% 
+  rename(
+    pct_smoke = "Smoking prevalence, total (ages 15+)",
+    GDP_per_capita = "GDP per capita, PPP (constant 2011 international $)",
+    country = "Entity",
+    year = "Year"
+  ) %>%
+  select(country, year, pct_smoke, GDP_per_capita) %>%
+  mutate(
+    year = year(parse_date(as.character(year), format = "%Y"))
+  ) %>%
+  filter(year == 2012)
+
+```
+*Data from the year of 2012
+
+### <em>3. R built-in geographical data </em>
+
+
+**Load the packages and data:**
+```{r, message=FALSE}
+world_renamed <- world %>%
+  rename(
+    geometry = "geom",
+    country = "name_long"
+  ) %>%
+  mutate(
+    country = ifelse(iso_a2 == "RU", "Russia", country)
+  )
+```
+
+---
+
+## Joining/Cleaning the datasets
+
+
+```{r}
+joined_dataset <- co2_emissions_2012 %>%
+  left_join(
+    smoking_2012, 
+    by = c(country = "country", year = "year"),
+  ) %>%
+  left_join(
+    (world_renamed %>% select(country, pop, geometry)), 
+    by = "country"
+  ) %>% drop_na() %>% st_sf()
+
+joined_dataset %>% head(n = 5)
+```
+
+---
+
+## Graphics
+
+### <em>Visualization 1</em>: Distribution of % smoking adult
+
+Below is the distribution of % adult smoking among all countries the world.
+```{r}
+joined_dataset %>%
+  select(pct_smoke, geometry) %>%
+  plot(
+    breaks = seq(0, 100, by = 10)
+  )
+```
+
+### <em>Visualization 2</em>: Distribution of GDP per capita
+
+Below is the distribution of GDP per capita among all countries the world.
+
+```{r}
+joined_dataset %>%
+  select(GDP_per_capita, geometry) %>%
+  plot(
+    breaks = seq(0, 80000, by = 10000)
+  )
+```
+
+
+### <em>Visualization 3</em>: Amount of co2 emissions
+
+Below is the distribution of CO2 emissions amount per person among all countries the world.
+
+```{r}
+joined_dataset %>%
+  select(emissions_per_person, geometry) %>%
+  plot(
+    breaks = seq(0, 25, by = 2)
+  )
+```
+America and Oceania continent, Russia, and almost all Africa has low population density. Asia and mid Europe becomes too crowded.
+
+
+### <em>Visualization 4</em>: Relationship between smoking and GDP
+
+In this visualization, we want to show the connection between GDP per capita for each different percentage of adult smoking. 
+
+```{r}
+joined_dataset %>%
+  arrange(desc(GDP_per_capita)) %>%
+  ggplot(aes(x = pct_smoke, y = GDP_per_capita)) +
+  geom_point(aes(color = GDP_per_capita, size = GDP_per_capita), alpha = 0.6) + 
+  guides(
+    color = guide_legend("GDP per capita (2012)"),
+    size  = guide_legend("GDP per capita (2012)")
+  ) + 
+  scale_x_continuous(
+    name = "% of adult smoking",
+    breaks = seq(0, 100, by = 10),
+  ) + 
+  ylab(
+    label = "GDP per capita"
+  ) +
+  scale_color_continuous(labels = dollar) +
+  scale_size_continuous(labels = dollar)
+```
+
+```{r}
+joined_dataset %>%
+  arrange(desc(emissions_per_person)) %>%
+  ggplot(aes(x = pct_smoke, y = emissions_per_person)) +
+  geom_point(aes(color = emissions_per_person, size = emissions_per_person), alpha = 0.6) + 
+  guides(
+    color = guide_legend("GDP per capita (2012)"),
+    size  = guide_legend("GDP per capita (2012)")
+  ) + 
+  scale_x_continuous(
+    name = "% of adult smoking",
+    breaks = seq(0, 100, by = 10),
+  ) + 
+  ylab(
+    label = "CO2 emissions per person"
+  )
+```
+
+It can be concluded that the lower level of GDP ($25,000 - $50,000) tends to varies in their smoking percentage, while richer people tend to focus only to around 20%.
+
+---
+
+## Discussion
+
+Crowded areas often have high electricity access and above-average GDP per capita. However, sparsely populated areas are different. North America, Russia, and Oceania have high GDP per capita, while South America and Africa have extremely low GDP per capita.
+
+## Appendix: Methodology
+
+
+<em>For Visualization 1, 2, and 3</em>, I used world map to illustrate the geographical distribution of the percentage of smoking adult, GDP per capita, adn CO2 emissions per person around the world. I used `st_sf()` after joining datasets to keep the `sf` property of the data frame. Then I used `  plot(breaks = seq(min, max, by)` to break the value into chunks, depended on the context. This methodology is good if we want to look at the big picture, but we cannot describe specific details. 
+
+<em>For Visualization 4</em>, we chose scatterplot for both graphs because we wanted to see the value distribution of the variables. This methodology is good when we want to see how density the data is.
+
+---
+<div id="license">
+This project was created by Phuc Ngo as final project for STAT 209: Data Computing and Visualization.
+</div>
